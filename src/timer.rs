@@ -5,7 +5,7 @@ use std::{
   sync::{Arc, Mutex},
   task::{Context, Poll, Waker},
   thread,
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 pub struct Timer {
@@ -46,15 +46,22 @@ impl Future for Timer {
   }
 }
 
+const TIMER_RESOLUTION: Duration = Duration::new(0, 99999);
+
 impl Timer {
   #[inline(always)]
   pub fn new(dur: Duration) -> Self {
+    let now = Instant::now();
+    let then = now + dur;
     let state = Arc::new(Mutex::new(State::default()));
 
     let thread_state = state.clone();
     thread::spawn(move || {
-      thread::park();
+      while Instant::now() < then {
+        thread::park_timeout(TIMER_RESOLUTION);
+      }
       thread::sleep(dur);
+
       let Ok(ref mut local) = thread_state.lock() else {
         return;
       };
@@ -68,3 +75,17 @@ impl Timer {
     Self { state }
   }
 }
+
+/// TODO:
+/// 1. Execution queue for complete tasks, sleep queue for incomplete tasks
+/// 2. Executor-compatible tasks ask to be spawned on the executor instance, or for the executor to
+/// spawn them directly
+///   - Trait for something like "ExecutorSpawnable"
+///   - Impl for Timer
+/// 3. Timer should no longer be responsible for its own thread; whether the runtime is threaded is
+/// an implementation detail at a higher level from, and therefore opaque to, the timer
+/// implementation; instead, its `poll` should simply return `Pending` if its target Instant has not
+/// yet come to pass
+/// 4. Instead, executor will be responsible for polling the sleep queue, and if necessary, spinning
+/// on a single timer no faster than TIMER_RESOLUTION
+const FUCK_YOU_I_JUST_WANTED_TO_USE_DOC_COMMENT_SYNTAX_FOR_AUTO_RE_COMMENT_ON_NEWLINE: () = ();

@@ -8,7 +8,7 @@ fn timer() {
 
   spawner.spawn(async {
     let then = Instant::now();
-    let Ok(_) = Timer::new(Duration::new(2, 0)).await else {
+    let Ok(_) = Timer::new(Duration::new(60, 0)).await else {
       println!("Timer failed!");
       return;
     };
