@@ -4,7 +4,7 @@ use crate::{executor::Executor, timer::Timer};
 
 #[test]
 fn timer() {
-  let (executor, spawner) = Executor::exec_pair();
+  let mut executor = Executor::new();
 
   spawner.spawn(async {
     let then = Instant::now();

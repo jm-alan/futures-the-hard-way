@@ -1,24 +1,26 @@
-use std::sync::{
-  Arc,
-  mpsc::{Receiver, sync_channel},
+use std::{
+  collections::VecDeque,
+  sync::{Arc, Mutex},
 };
 
-use crate::{spawner::Spawner, task::Task};
+use crate::task::Task;
 
 pub struct Executor {
-  queue: Receiver<Arc<Task>>,
+  tasks: Mutex<VecDeque<Task>>,
 }
 
 impl Executor {
-  pub fn exec_pair() -> (Executor, Spawner) {
-    let (sender, queue) = sync_channel(10_000);
-
-    (Executor { queue }, Spawner::new(sender))
+  pub fn new() -> Self {
+    Self {
+      tasks: Mutex::new(VecDeque::new()),
+    }
   }
 
-  pub fn run(&self) {
-    while let Ok(task) = self.queue.recv() {
-      task.tick();
-    }
+  pub fn arc_new() -> Arc<Self> {
+    Arc::new(Self::new())
+  }
+
+  pub fn run(&mut self) {
+    while let Ok(task_queue) = self.tasks.lock() {}
   }
 }

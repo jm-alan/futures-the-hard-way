@@ -80,8 +80,8 @@ impl Timer {
 /// 1. Execution queue for complete tasks, sleep queue for incomplete tasks
 /// 2. Executor-compatible tasks ask to be spawned on the executor instance, or for the executor to
 /// spawn them directly
-///   - Trait for something like "ExecutorSpawnable"
-///   - Impl for Timer
+///     - Trait for something like "ExecutorSpawnable"
+///     - Impl for Timer
 /// 3. Timer should no longer be responsible for its own thread; whether the runtime is threaded is
 /// an implementation detail at a higher level from, and therefore opaque to, the timer
 /// implementation; instead, its `poll` should simply return `Pending` if its target Instant has not
