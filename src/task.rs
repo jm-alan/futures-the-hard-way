@@ -1,5 +1,5 @@
 use std::{
-  sync::{Arc, Mutex, mpsc::SyncSender},
+  sync::{Arc, Mutex},
   task::{Context, Wake, Waker},
 };
 
@@ -7,18 +7,13 @@ use crate::types::BoxFuture;
 
 pub struct Task {
   ftex: Mutex<Option<BoxFuture<'static, ()>>>,
-  sender: SyncSender<Arc<Self>>,
 }
 
 impl Task {
   #[inline(always)]
-  pub fn new(
-    fut: impl Future<Output = ()> + 'static + Send,
-    sender: SyncSender<Arc<Self>>,
-  ) -> Self {
+  pub fn new(fut: impl Future<Output = ()> + 'static + Send) -> Self {
     Self {
       ftex: Mutex::new(Some(Box::pin(fut))),
-      sender,
     }
   }
 
@@ -44,11 +39,6 @@ impl Task {
 impl Wake for Task {
   #[inline]
   fn wake(self: Arc<Self>) {
-    let sender = self.sender.clone();
-
-    match sender.send(self) {
-      Err(err) => println!("Failed to reschedule completed task: {err:?}"),
-      _ => {},
-    }
+    todo!()
   }
 }
