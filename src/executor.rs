@@ -4,10 +4,10 @@ use std::{
   task::{Context, Poll, Wake, Waker},
 };
 
-use crate::task::Task;
+use crate::task::{Task, Taskable};
 
 pub struct Executor {
-  tasks: Mutex<VecDeque<Task>>,
+  tasks: Mutex<VecDeque<Arc<Task<dyn Taskable + Send + Sync>>>>,
 }
 
 impl Executor {
@@ -18,34 +18,48 @@ impl Executor {
   }
 
   #[inline(always)]
-  pub fn main<T>(mn: impl AsyncFnOnce(Arc<Executor>) -> T) -> T {
+  pub fn main<T>(mn: impl AsyncFnOnce(Arc<Executor>) -> T) {
     let exe = Self::new();
     let mut f = Box::pin(mn(exe.clone()));
 
-    let waker = Waker::from(exe);
-    let mut cx = Context::from_waker(&waker);
+    while let Ok(mut tq) = exe.tasks.lock() {
+      while let Some(task) = tq.pop_front() {
+        let waker_clone = task.clone();
+        let Ok(mut ftex) = task.ftex.lock() else {
+          continue;
+        };
 
-    loop {
-      match f.as_mut().poll(&mut cx) {
-        Poll::Ready(result) => return result,
-        _ => {},
+        let waker = Waker::from(waker_clone);
+        let cx = &mut Context::from_waker(&waker);
+
+        let Poll::Ready(_) = ftex.as_mut().poll(cx) else {
+          drop(ftex);
+          tq.push_back(task);
+          return;
+        };
       }
     }
   }
 
   #[inline(always)]
-  pub fn spawn<A>(self: Arc<Self>, f: A) -> Result<(), ()>
+  pub fn spawn<T: Taskable>(
+    self: Arc<Self>,
+    f: impl Future<Output = T> + Send + 'static,
+  ) -> Result<Arc<Task<T>>, ()>
   where
-    A: AsyncFnOnce() + Send,
-    A::CallOnceFuture: Send + 'static,
+    T: Send + Sync,
   {
     let Ok(ref mut tasks) = self.tasks.lock() else {
       return Err(());
     };
 
-    tasks.push_back(Task::new(f()));
+    let arc_task = Arc::new(Task::<T>::new(async {
+      Box::new(f.await) as Box<dyn Taskable + Send + Sync>
+    }));
 
-    Ok(())
+    tasks.push_back(arc_task.clone());
+
+    Ok(unsafe { (*((&arc_task) as *const _ as *const Arc<Task<T>>)).clone() })
   }
 }
 

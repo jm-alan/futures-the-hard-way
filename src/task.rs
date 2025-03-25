@@ -1,42 +1,61 @@
 use std::{
+  error::Error,
+  fmt::Display,
+  pin::Pin,
   sync::{Arc, Mutex},
-  task::{Context, Wake, Waker},
+  task::{Context, Poll, Wake},
 };
 
-use crate::types::BoxFuture;
+type BoxFuture<T> = Pin<Box<dyn Future<Output = Box<T>> + Send + 'static>>;
 
-pub struct Task {
-  ftex: Mutex<Option<BoxFuture<'static, ()>>>,
+pub(crate) trait Taskable {}
+
+impl<T> Taskable for T where T: Sized {}
+
+#[derive(Debug)]
+pub struct TaskError;
+
+impl Display for TaskError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("<Task internal mutex poisoned>")
+  }
 }
 
-impl Task {
+impl Error for TaskError {}
+
+pub struct Task<T: ?Sized + Send + 'static> {
+  pub(crate) ftex: Mutex<BoxFuture<T>>,
+  resolved: Mutex<Option<Box<T>>>,
+}
+
+impl<T: Send> Task<T> {
   #[inline(always)]
-  pub fn new(fut: impl Future<Output = ()> + 'static + Send) -> Self {
-    Self {
-      ftex: Mutex::new(Some(Box::pin(fut))),
-    }
-  }
-
-  pub fn tick(self: Arc<Self>) {
-    let Ok(mut mfut) = self.ftex.lock() else {
-      println!("Task internal mutex poisoned.");
-      return;
-    };
-
-    let Some(mut f) = mfut.take() else {
-      return;
-    };
-
-    let waker = Waker::from(self.clone());
-
-    let cx = &mut Context::from_waker(&waker);
-    if f.as_mut().poll(cx).is_pending() {
-      *mfut = Some(f);
+  pub fn new(
+    fut: impl Future<Output = Box<dyn Taskable + Send + Sync>> + 'static + Send,
+  ) -> Task<dyn Taskable + Send + Sync> {
+    Task {
+      ftex: Mutex::new(Box::pin(fut)),
+      resolved: Mutex::new(None),
     }
   }
 }
 
-impl Wake for Task {
+impl<T: Send + Sync> Future for Task<T> {
+  type Output = Result<Box<T>, TaskError>;
+  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    let Ok(mut rtex) = self.resolved.lock() else {
+      return Poll::Ready(Err(TaskError));
+    };
+
+    let Some(resolved) = rtex.take() else {
+      return Poll::Pending;
+    };
+
+    Poll::Ready(Ok(resolved))
+  }
+}
+
+impl Wake for Task<dyn Taskable + Send + Sync> {
   #[inline]
   fn wake(self: Arc<Self>) {
     todo!()
