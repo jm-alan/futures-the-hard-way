@@ -2,11 +2,11 @@ use std::{
   error::Error,
   fmt::Display,
   pin::Pin,
-  sync::{Arc, Mutex},
-  task::{Context, Poll, Wake},
+  sync::{Arc, Mutex, MutexGuard},
+  task::{Context, Poll, Wake, Waker},
 };
 
-type BoxFuture<T> = Pin<Box<dyn Future<Output = Box<T>> + Send + 'static>>;
+use crate::types::{BoxFuture, TaskWrappable};
 
 pub(crate) trait Taskable {}
 
@@ -23,31 +23,56 @@ impl Display for TaskError {
 
 impl Error for TaskError {}
 
+#[derive(Clone)]
 pub struct Task<T: ?Sized + Send + 'static> {
-  pub(crate) ftex: Mutex<BoxFuture<T>>,
+  state: Arc<TaskState<T>>,
+}
+
+struct TaskState<T: ?Sized + Send + 'static> {
+  fut: Mutex<BoxFuture<T>>,
   resolved: Mutex<Option<Box<T>>>,
+  waker: Mutex<Option<Waker>>,
 }
 
 impl<T: Send> Task<T> {
   #[inline(always)]
-  pub fn new(
-    fut: impl Future<Output = Box<dyn Taskable + Send + Sync>> + 'static + Send,
-  ) -> Task<dyn Taskable + Send + Sync> {
+  pub fn new(f: impl Future<Output = Box<TaskWrappable>> + 'static + Send) -> Task<TaskWrappable> {
     Task {
-      ftex: Mutex::new(Box::pin(fut)),
-      resolved: Mutex::new(None),
+      state: Arc::new(TaskState {
+        fut: Mutex::new(Box::pin(f)),
+        resolved: Mutex::new(None),
+        waker: Mutex::new(None),
+      }),
     }
   }
 }
 
-impl<T: Send + Sync> Future for Task<T> {
-  type Output = Result<Box<T>, TaskError>;
+impl Future for Task<TaskWrappable> {
+  type Output = Result<Box<TaskWrappable>, TaskError>;
   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    let Ok(mut rtex) = self.resolved.lock() else {
+    let Ok(mut rtex) = self.state.resolved.lock() else {
       return Poll::Ready(Err(TaskError));
     };
 
+    let state = self.state.clone();
+    let new_task = Task { state };
+    let waker = Waker::from(Arc::new(new_task));
+    let inner_cx = &mut Context::from_waker(&waker);
+
     let Some(resolved) = rtex.take() else {
+      let Ok(mut ftex) = self.state.fut.lock() else {
+        return Poll::Ready(Err(TaskError));
+      };
+      if let Poll::Ready(res) = ftex.as_mut().poll(inner_cx) {
+        return Poll::Ready(Ok(res));
+      };
+
+      let Ok(mut wtex) = self.state.waker.lock() else {
+        return Poll::Ready(Err(TaskError));
+      };
+      if let Some(old) = wtex.replace(cx.waker().clone()) {
+        drop(old);
+      };
       return Poll::Pending;
     };
 
@@ -55,9 +80,29 @@ impl<T: Send + Sync> Future for Task<T> {
   }
 }
 
-impl Wake for Task<dyn Taskable + Send + Sync> {
+impl Wake for Task<TaskWrappable> {
   #[inline]
   fn wake(self: Arc<Self>) {
-    todo!()
+    let Ok(mut ftex) = self.state.fut.lock() else {
+      return;
+    };
+
+    let waker = Waker::from(self.clone());
+    let cx = &mut Context::from_waker(&waker);
+    let Poll::Ready(resolved) = ftex.as_mut().poll(cx) else {
+      return;
+    };
+    let Ok(mut rtex) = self.state.resolved.lock() else {
+      return;
+    };
+    rtex.replace(resolved);
+
+    let Ok(mut wtex) = self.state.waker.lock() else {
+      return;
+    };
+    let Some(waker) = wtex.take() else {
+      return;
+    };
+    waker.wake();
   }
 }
