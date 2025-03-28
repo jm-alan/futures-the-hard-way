@@ -30,7 +30,7 @@ struct State {
 impl Future for Timer {
   type Output = Result<(), TimerError>;
   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    println!("Timer polled");
+    println!("Timer being polled");
     let Ok(ref mut state) = self.state.lock() else {
       return Poll::Ready(Err(TimerError("Internal mutex poisoned".to_string())));
     };
