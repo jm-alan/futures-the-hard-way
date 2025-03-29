@@ -4,4 +4,6 @@ mod tests;
 mod executor;
 mod task;
 mod timer;
-mod types;
+
+pub use executor::Executor;
+pub use task::Task;

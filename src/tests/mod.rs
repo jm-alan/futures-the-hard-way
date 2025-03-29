@@ -2,5 +2,7 @@ use crate::executor::Executor;
 
 #[test]
 fn timer() {
-  Executor::main(async |_| {});
+  Executor::main(|_| async {
+    println!("Async hello! :)");
+  });
 }
