@@ -1,4 +1,5 @@
 use std::{
+  fmt::Debug,
   pin::Pin,
   sync::{Arc, Mutex},
   task::{Context, Poll},
@@ -9,22 +10,22 @@ use super::{TaskError, TaskState};
 pub trait Taskable: Send + 'static {}
 impl<T> Taskable for T where T: Send + 'static {}
 
+#[derive(Clone)]
 pub struct Task<T: Taskable> {
+  id: usize,
   state: Arc<Mutex<TaskState<T>>>,
 }
 
-impl<T: Taskable> Clone for Task<T> {
-  fn clone(&self) -> Self {
-    Self {
-      state: self.state.clone(),
-    }
+impl<T: Taskable> Debug for Task<T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(&format!("Task<{}>", self.id))
   }
 }
 
 impl<T: Taskable> Task<T> {
   #[inline(always)]
-  pub(crate) fn new(state: Arc<Mutex<TaskState<T>>>) -> Self {
-    Self { state }
+  pub(crate) fn new(id: usize, state: Arc<Mutex<TaskState<T>>>) -> Self {
+    Self { id, state }
   }
 }
 

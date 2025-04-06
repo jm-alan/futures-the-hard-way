@@ -2,13 +2,15 @@ use std::{
   error::Error,
   fmt::{self, Display, Formatter},
   pin::Pin,
-  sync::{Arc, Mutex},
-  task::{Context, Poll, Waker},
+  task::{Context, Poll},
+  thread,
   time::{Duration, Instant},
 };
 
+pub(crate) const TIMER_RESOLUTION: Duration = Duration::new(0, 499_999);
+
 pub struct Timer {
-  state: Arc<Mutex<State>>,
+  target: Instant,
 }
 
 #[derive(Debug)]
@@ -22,42 +24,32 @@ impl Display for TimerError {
 
 impl Error for TimerError {}
 
-struct State {
-  target: Instant,
-  waker: Option<Waker>,
-}
-
 impl Future for Timer {
   type Output = Result<(), TimerError>;
   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    println!("Timer being polled");
-    let Ok(ref mut state) = self.state.lock() else {
-      return Poll::Ready(Err(TimerError("Internal mutex poisoned".to_string())));
-    };
+    let poll_start = Instant::now();
 
-    let now = Instant::now();
-
-    if now >= state.target {
+    if poll_start >= self.target {
+      println!("Timer complete");
       Poll::Ready(Ok(()))
     } else {
-      println!("Timer still has {:?} to go", state.target - now);
-      state.waker = Some(cx.waker().clone());
+      println!("Timer still has {:?} to go", self.target - poll_start);
+      let sleep_until = poll_start + TIMER_RESOLUTION;
+      while Instant::now() < sleep_until {
+        thread::park_timeout(sleep_until - Instant::now());
+      }
+      cx.waker().clone().wake();
 
       Poll::Pending
     }
   }
 }
 
-pub const TIMER_RESOLUTION: Duration = Duration::new(0, 499_999);
-
 impl Timer {
   #[inline(always)]
   pub fn new(dur: Duration) -> Self {
-    let state = Arc::new(Mutex::new(State {
+    Self {
       target: Instant::now() + dur,
-      waker: None,
-    }));
-
-    Self { state }
+    }
   }
 }
