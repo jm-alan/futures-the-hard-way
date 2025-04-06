@@ -49,10 +49,10 @@ impl InnerTask {
 
     match ftex.as_mut().poll(cx) {
       Poll::Pending => {
-        let Ok(mut dtex) = self.waiting_task_handle.lock() else {
+        let Ok(mut htex) = self.waiting_task_handle.lock() else {
           return;
         };
-        dtex.insert(self.clone());
+        htex.insert(self.clone());
       },
       _ => {},
     };
@@ -61,11 +61,11 @@ impl InnerTask {
 
 impl Wake for InnerTask {
   fn wake(self: Arc<Self>) {
-    let Ok(mut dtex) = self.waiting_task_handle.lock() else {
+    let Ok(mut htex) = self.waiting_task_handle.lock() else {
       return;
     };
 
-    dtex.remove(&self);
+    htex.remove(&self);
 
     _ = self.task_sender.send(Some(self.clone()));
   }
