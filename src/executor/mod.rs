@@ -4,96 +4,71 @@ use std::{
   collections::HashSet,
   error::Error,
   fmt::Display,
-  sync::{
-    Arc, Mutex, OnceLock,
-    mpsc::{SyncSender, sync_channel},
-  },
+  num::NonZero,
+  sync::{Arc, Mutex, OnceLock, mpsc::Sender},
   task::{Context, Poll, Wake, Waker},
-  thread::{self},
+  thread::{self, available_parallelism},
 };
 
 use crate::task::{InnerTask, Taskable};
 pub use spawn_handle::SpawnHandle;
 
-pub(crate) type TaskSender = SyncSender<Option<Arc<InnerTask>>>;
+pub(crate) type TaskSender = Sender<Option<Arc<InnerTask>>>;
 pub(crate) type WaitingTaskHandle = Arc<Mutex<HashSet<Arc<InnerTask>>>>;
 
-static SHARED_HANDLE: OnceLock<SpawnHandle> = OnceLock::new();
+static SHARED_EXEC: OnceLock<Executor> = OnceLock::new();
+static SHARED_HANDLE: OnceLock<Arc<SpawnHandle>> = OnceLock::new();
 
-pub struct Executor;
+pub struct Executor {
+  threads: usize,
+}
+
+impl Default for Executor {
+  fn default() -> Self {
+    Executor {
+      threads: available_parallelism()
+        .unwrap_or(NonZero::new(1).unwrap())
+        .into(),
+    }
+  }
+}
 
 impl Executor {
+  /// Entrypoint function. Should only be called once in a given program.
   #[inline(always)]
-  pub fn main<'exe, Main, FWrap, Result>(
-    threads: usize,
-    max_concurrent_tasks: usize,
-    m: Main,
-  ) -> Result
+  pub fn main<Main, FWrap, Result>(m: Main) -> Result
   where
-    Main: (FnOnce(Arc<SpawnHandle>) -> FWrap) + Taskable,
+    Main: (FnOnce() -> FWrap) + Taskable,
     FWrap: Future<Output = Result> + Taskable,
     Result: Taskable,
   {
-    let mut channel_pairs = (0..threads)
-      .map(|_| {
-        let (s, r) = sync_channel(max_concurrent_tasks / threads);
-        (Some(s), Some(r))
-      })
-      .collect::<Vec<_>>();
-
-    let mut recv_pool = (0..threads)
-      .map(|idx| channel_pairs[idx].1.take())
-      .collect::<Vec<_>>();
-
-    let spawn_handle = Arc::new(SpawnHandle::new(
-      (0..threads)
-        .map(|idx| unsafe { channel_pairs[idx].0.take().unwrap_unchecked() })
-        .collect(),
-      Arc::new(Mutex::new(HashSet::new())),
-    ));
-    let fmain = m(spawn_handle.clone());
+    SHARED_EXEC.get_or_init(|| Self::default()).run(m)
+  }
+  #[inline(always)]
+  pub fn run<Main, FWrap, Result>(&self, m: Main) -> Result
+  where
+    Main: (FnOnce() -> FWrap) + Taskable,
+    FWrap: Future<Output = Result> + Taskable,
+    Result: Taskable,
+  {
+    let spawn_handle = SpawnHandle::current();
     let handle_post_main = spawn_handle.clone();
     let Ok(main_task) = spawn_handle.spawn(async move {
-      let res = fmain.await;
+      let res = m().await;
       handle_post_main.cancel_all();
       return res;
     }) else {
       panic!("Executor sender/receiver pair closed before main began execution.");
     };
 
-    let join_handles = (0..(threads - 1))
-      .map(|idx| {
-        let rec = unsafe {
-          recv_pool
-            .get_mut(idx)
-            .unwrap_unchecked()
-            .take()
-            .unwrap_unchecked()
-        };
-        thread::spawn(move || {
-          while let Ok(Some(inner)) = rec.recv() {
-            inner.step();
-          }
-        })
-      })
-      .collect::<Vec<_>>();
+    let core_receiver = unsafe { recv_pool[0].take().unwrap_unchecked() };
 
-    let final_receiver = unsafe {
-      recv_pool
-        .get_mut(threads - 1)
-        .unwrap_unchecked()
-        .take()
-        .unwrap_unchecked()
-    };
-
-    while let Ok(Some(inner)) = final_receiver.recv() {
+    while let Ok(Some(inner)) = core_receiver.recv() {
       inner.step();
     }
-    for handle in join_handles {
-      _ = handle.join();
-    }
+    spawn_handle.join_all();
 
-    let waker = Waker::from(Arc::new(Executor));
+    let waker = Waker::from(Arc::new(self));
     let context = &mut Context::from_waker(&waker);
     let mut pinned = Box::pin(main_task);
     let Poll::Ready(Ok(res)) = pinned.as_mut().poll(context) else {
