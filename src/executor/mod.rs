@@ -5,7 +5,7 @@ use std::{
   error::Error,
   fmt::Display,
   sync::{
-    Arc, Mutex, OnceLock,
+    Arc, Mutex,
     mpsc::{SyncSender, sync_channel},
   },
   task::{Context, Poll, Wake, Waker},
@@ -17,8 +17,6 @@ pub use spawn_handle::SpawnHandle;
 
 pub(crate) type TaskSender = SyncSender<Option<Arc<InnerTask>>>;
 pub(crate) type WaitingTaskHandle = Arc<Mutex<HashSet<Arc<InnerTask>>>>;
-
-static SHARED_HANDLE: OnceLock<SpawnHandle> = OnceLock::new();
 
 pub struct Executor;
 

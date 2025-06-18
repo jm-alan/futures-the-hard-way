@@ -1,6 +1,7 @@
 [package]
-name = "futures-the-hard-way"
+name = "rittimo"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+kqueue = { path = "../kqueue_rittimo" }

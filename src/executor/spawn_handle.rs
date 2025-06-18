@@ -12,7 +12,7 @@ use super::{SpawnError, TaskSender, WaitingTaskHandle};
 
 pub struct SpawnHandle {
   pool_size: usize,
-  send_pool: Vec<TaskSender>,
+  send_pool: Arc<[TaskSender]>,
   waiting_task_handle: WaitingTaskHandle,
   next_id: AtomicUsize,
   next_regi: AtomicUsize,
@@ -20,7 +20,7 @@ pub struct SpawnHandle {
 
 impl SpawnHandle {
   #[inline(always)]
-  pub(crate) fn new(send_pool: Vec<TaskSender>, waiting_task_handle: WaitingTaskHandle) -> Self {
+  pub(crate) fn new(send_pool: Arc<[TaskSender]>, waiting_task_handle: WaitingTaskHandle) -> Self {
     Self {
       pool_size: send_pool.len(),
       send_pool,
@@ -68,7 +68,7 @@ impl SpawnHandle {
 
   #[inline(always)]
   pub(crate) fn cancel_all(&self) {
-    for sender in &self.send_pool {
+    for sender in self.send_pool.iter() {
       _ = sender.send(None);
     }
   }
